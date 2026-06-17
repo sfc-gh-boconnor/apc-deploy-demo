@@ -1,0 +1,10 @@
+install:
+  commands:
+    - ["npm", "ci", "--include=dev"]
+
+run:
+  command: ["node", ".next/standalone/server.js"]
+
+profile:
+  label: "AI Product Costing"
+  description: "SAP BDC + Snowflake — real-time product cost variance analysis powered by Cortex AI"

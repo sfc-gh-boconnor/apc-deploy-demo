@@ -1,0 +1,60 @@
+version: 2
+
+models:
+  - name: stg_fx_rates
+    description: "Decoded SAP TCURR FX rates (FCURR -> USD), monthly. usd = local * usd_per_unit."
+    columns:
+      - name: from_currency
+        tests: [not_null]
+      - name: usd_per_unit
+        tests: [not_null]
+
+  - name: stg_material_master
+    description: "Cleaned material master with decoded material type."
+    columns:
+      - name: material_number
+        tests: [not_null, unique]
+
+  - name: stg_plant
+    description: "Cleaned plant master with company code + local currency."
+    columns:
+      - name: plant_code
+        tests: [not_null, unique]
+      - name: local_currency
+        tests: [not_null]
+
+  - name: stg_ledger_postings
+    description: "De-duplicated, non-null material-ledger postings (line-item grain). Reversals retained for netting."
+    columns:
+      - name: material_number
+        tests: [not_null]
+      - name: plant_code
+        tests: [not_null]
+      - name: amount_local
+        tests: [not_null]
+
+  - name: stg_standard_price
+    description: "Effective-dated standard prices (MBEW), local currency."
+    columns:
+      - name: material_number
+        tests: [not_null]
+      - name: standard_price_local
+        tests: [not_null]
+
+  - name: stg_cost_components
+    description: "Cleaned KEPH component split with decoded component label, standard + actual."
+    columns:
+      - name: material_number
+        tests: [not_null]
+      - name: record_type
+        tests:
+          - accepted_values:
+              values: ['S', 'A']
+
+  - name: stg_sd_billing
+    description: "Cleaned SD billing line items (revenue per material/market/period)."
+    columns:
+      - name: material_number
+        tests: [not_null]
+      - name: net_revenue
+        tests: [not_null]

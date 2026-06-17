@@ -1,0 +1,43 @@
+name: 'apc'
+version: '1.0.0'
+config-version: 2
+
+# This profile name must match the profile in profiles.yml
+profile: 'default'
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+# Materialization: medallion pipeline built on Snowflake DYNAMIC TABLES.
+# Staging + intermediate refresh on DOWNSTREAM lag; marts on a 1-hour target lag.
+# The whole chain stays fresh with no tasks/streams/orchestration code.
+models:
+  apc:
+    staging:
+      +materialized: dynamic_table
+      +snowflake_warehouse: "{{ var('warehouse', 'APC_DEPLOY_WH') }}"
+      +target_lag: downstream
+      +on_configuration_change: apply
+    intermediate:
+      +materialized: dynamic_table
+      +snowflake_warehouse: "{{ var('warehouse', 'APC_DEPLOY_WH') }}"
+      +target_lag: downstream
+      +on_configuration_change: apply
+    marts:
+      +materialized: dynamic_table
+      +snowflake_warehouse: "{{ var('warehouse', 'APC_DEPLOY_WH') }}"
+      +target_lag: "1 hour"
+      +on_configuration_change: apply
+
+# Decode tables (SAP code -> business label) loaded as seeds.
+seeds:
+  apc:
+    +schema: DBT_ANALYTICS
+
+# Standard cost resets annually from the prior-year actual average; an inflation
+# uplift applies from FY2026 onward (matches the source standard-setting).
+vars:
+  standard_inflation: 0.03

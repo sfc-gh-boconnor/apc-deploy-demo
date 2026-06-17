@@ -1,0 +1,89 @@
+version: 2
+
+models:
+  - name: mart_product_cost
+    description: "Analysis-ready Actual vs Budget vs Standard cost by material x plant x period. Built from RAW SAP via the dbt pipeline; parity with ANALYTICS.PRODUCT_COST_SUMMARY."
+    columns:
+      - name: material_number
+        description: "Material number; must exist in the material master."
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_material_master')
+              field: material_number
+      - name: actual_cost_per_unit
+        tests: [not_null]
+      - name: standard_cost_per_unit
+        tests: [not_null]
+      - name: cost_variance_pct
+        tests: [not_null]
+      - name: variance_flag
+        tests:
+          - accepted_values:
+              values: ['HIGH', 'MEDIUM', 'LOW']
+
+  - name: mart_cost_budget
+    description: "Period budget (prior-year actual) per material x plant x period. Parity with SAP_BDC.COST_BUDGET."
+    columns:
+      - name: budget_cost
+        tests: [not_null]
+
+  - name: mart_cost_component_detail
+    description: "Standard vs actual by cost component, in USD. Parity with ANALYTICS.COST_COMPONENT_DETAIL."
+    columns:
+      - name: material_number
+        tests: [not_null]
+      - name: cost_component
+        tests: [not_null]
+
+  - name: mart_product_cost_monthly
+    description: "Cost summary aggregated to material x period across all plants."
+    columns:
+      - name: material_number
+        tests: [not_null]
+      - name: avg_variance_pct
+        tests: [not_null]
+
+  - name: mart_product_profitability
+    description: "CO-PA style profitability — SD revenue vs CO-PC cost by material x market x period. Parity with ANALYTICS.PRODUCT_PROFITABILITY."
+    columns:
+      - name: MATERIAL_NUMBER
+        tests: [not_null]
+      - name: REVENUE
+        tests: [not_null]
+
+  - name: mart_cost_anomalies
+    description: "Statistical cost-component anomalies (z-score). Parity with ANALYTICS.COST_ANOMALIES."
+    columns:
+      - name: MATERIAL_NUMBER
+        tests: [not_null]
+      - name: Z_SCORE
+        tests: [not_null]
+
+  - name: mart_product_risk_scores
+    description: "Per-product variance trajectory + next-period projection. Parity with ANALYTICS.PRODUCT_RISK_SCORES."
+    columns:
+      - name: MATERIAL_NUMBER
+        tests: [not_null, unique]
+      - name: RISK_LEVEL
+        tests:
+          - accepted_values:
+              values: ['HIGH', 'MEDIUM', 'LOW']
+
+  - name: mart_variance_trend_with_forecast
+    description: "Portfolio variance actuals + ML forecast. Parity with ANALYTICS.VARIANCE_TREND_WITH_FORECAST."
+    columns:
+      - name: DATA_TYPE
+        tests:
+          - accepted_values:
+              values: ['actual', 'forecast']
+
+  - name: mart_sales_forecast
+    description: "Sales revenue + volume actuals (FY2026 H1) unioned with ML forecast (H2). Includes cost-based margin forecast — shows how cost variance compresses H2 gross margin by product."
+    columns:
+      - name: MATERIAL_NUMBER
+        tests: [not_null]
+      - name: DATA_TYPE
+        tests:
+          - accepted_values:
+              values: ['actual', 'forecast']

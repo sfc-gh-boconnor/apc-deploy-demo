@@ -1,0 +1,18 @@
+{
+  "_comment": "Enforced guardrail: blocks any tool call that creates a NEW Snowflake connection (Session.builder / snowflake.connector.connect / Session(...)) so the active Workspace / Streamlit-in-Snowflake session is always reused. To activate, merge this into ~/.snowflake/cortex/hooks.json and set the command to the ABSOLUTE path of block-create-connection.sh in your clone.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "<ABS_PATH_TO_REPO>/.cortex/hooks/block-create-connection.sh",
+            "timeout": 15,
+            "enabled": true
+          }
+        ]
+      }
+    ]
+  }
+}

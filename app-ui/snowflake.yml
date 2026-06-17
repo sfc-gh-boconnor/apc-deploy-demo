@@ -1,0 +1,28 @@
+definition_version: "2"
+
+entities:
+  AI_PRODUCT_COSTING:
+    type: snowflake-app
+    identifier:
+      name: AI_PRODUCT_COSTING
+      database: APC_DEPLOY_DB
+      schema: ANALYTICS
+    meta:
+      title: AI Product Costing
+    artifacts:
+      - src: ./*
+        dest: ./
+        ignore:
+          - node_modules
+          - .env*
+          - __pycache__
+          - "*.pyc"
+          - .next
+          - .git
+          - snowflake.log
+
+    query_warehouse: APC_DEPLOY_WH
+    build_compute_pool:
+      name: SYSTEM_COMPUTE_POOL_CPU
+    service_compute_pool:
+      name: SYSTEM_COMPUTE_POOL_CPU

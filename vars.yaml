@@ -1,0 +1,17 @@
+# =============================================================================
+# APC Deploy — default variables
+# =============================================================================
+# Override any variable per-run with:
+#   python3 deploy.py -c <connection> -f sql/01_setup.sql -D "database=MY_DB"
+# Or run without overrides to use these defaults as-is.
+# =============================================================================
+
+database: APC_DEPLOY_DB
+warehouse: APC_DEPLOY_WH
+warehouse_size: XSMALL
+
+# dbt identity — leave blank to auto-detect from the active snow connection.
+# Override with: -D "dbt_account=myaccount" -D "dbt_user=myuser" -D "dbt_role=ACCOUNTADMIN"
+dbt_account: ""
+dbt_user: ""
+dbt_role: ""

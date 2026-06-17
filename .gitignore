@@ -1,0 +1,12 @@
+config.env
+secrets/
+node_modules/
+dist/
+dist-server/
+*.pyc
+__pycache__/
+.env
+
+# Streamlit build artifacts
+streamlit/output/
+dbt/apc/target/

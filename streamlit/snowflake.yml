@@ -1,0 +1,19 @@
+definition_version: "2"
+
+entities:
+  apc_deploy_streamlit:
+    type: streamlit
+    identifier:
+      name: APC_DEPLOY_STREAMLIT
+      database: "{{ database }}"
+      schema: ANALYTICS
+    query_warehouse: "{{ warehouse }}"
+    runtime_name: SYSTEM$ST_CONTAINER_RUNTIME_PY3_11
+    compute_pool: SYSTEM_COMPUTE_POOL_CPU
+    external_access_integrations:
+      - PYPI_ACCESS_INTEGRATION
+    main_file: streamlit_app.py
+    artifacts:
+      - streamlit_app.py
+      - pyproject.toml
+      - .streamlit/config.toml

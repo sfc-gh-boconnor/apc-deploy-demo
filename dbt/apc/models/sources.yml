@@ -1,0 +1,36 @@
+version: 2
+
+sources:
+  - name: sap_raw
+    description: "Raw SAP ECC/BW extracts surfaced in Snowflake (pre-transformation). Messy by design — line items, local currency, coded fields."
+    database: "{{ var('database', 'APC_DEPLOY_DB') }}"
+    schema: SAP_RAW
+    tables:
+      - name: MATERIAL_LEDGER_DOC
+        description: "CKMLCR/MLIT material-ledger POSTING LINE ITEMS. Many rows per material/plant/period incl. reversals; unit cost must be derived."
+      - name: MBEW_RAW
+        description: "Material valuation — effective-dated standard prices in local currency."
+      - name: KEPH_RAW
+        description: "Cost component split — coded element numbers, standard + actual, local currency."
+      - name: MARA_RAW
+        description: "Material master (general); MATNR may carry trailing spaces; MTART undecoded."
+      - name: T001W_RAW
+        description: "Plant master with company code + local currency."
+      - name: TCURR_RAW
+        description: "FX rates FCURR -> USD, monthly, with SAP inverted GDATU date."
+
+  - name: sap_bdc
+    description: "SAP BDC data products that are already analysis-shaped (used as-is as sources)."
+    database: "{{ var('database', 'APC_DEPLOY_DB') }}"
+    schema: SAP_BDC
+    tables:
+      - name: SD_BILLING
+        description: "VBRP/VBRK SD billing line items — revenue per material/market/period (for profitability)."
+
+  - name: energy_market
+    description: "Marketplace-shaped energy price indices (LEBA-shaped, synthetic). Swap for the real EOSE.* Snowflake Marketplace share to use live market data."
+    database: "{{ var('database', 'APC_DEPLOY_DB') }}"
+    schema: ENERGY_MARKET
+    tables:
+      - name: ENERGY_PRICE_INDICES
+        description: "Energy price indices — DATE/INDEX/DELIVERY/VOLUME/WA(price $/MWh)/STATUS/FLAG. Mirrors EOSE.EUROPEAN_POWER_INDICES / UK_GAS_PROMPT_INDICES."

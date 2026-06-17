@@ -1,0 +1,11 @@
+[project]
+name = "apc-streamlit"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "streamlit>=1.48.0",
+    "snowflake-snowpark-python>=1.11.0",
+    "plotly>=5.18.0",
+    "pandas>=2.0.0",
+    "markdown>=3.5",
+]

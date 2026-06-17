@@ -1,0 +1,28 @@
+version: 2
+
+models:
+  - name: int_period_actuals
+    description: "Period actual unit cost derived from raw postings: aggregate line items (nets reversals), weighted-avg unit cost, FX to USD."
+    columns:
+      - name: material_number
+        tests: [not_null]
+      - name: actual_cost_usd
+        tests: [not_null]
+
+  - name: int_standard_by_period
+    description: "Effective-dated standard price resolved per fiscal year and FX-converted to USD."
+    columns:
+      - name: standard_cost_usd
+        tests: [not_null]
+
+  - name: int_cost_components
+    description: "Cost component split converted to USD, standard vs actual per component."
+    columns:
+      - name: cost_component
+        tests: [not_null]
+
+  - name: int_budget
+    description: "Budget = prior-year same-month actual; plus the derived annual standard reset (prior-year avg x inflation)."
+    columns:
+      - name: material_number
+        tests: [not_null]

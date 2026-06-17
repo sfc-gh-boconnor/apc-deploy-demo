@@ -1,0 +1,229 @@
+name: apc_semantic_view
+description: >
+  AI Product Costing — semantic view over SAP BDC product cost data.
+  Covers standard vs actual cost variance by material, plant and period.
+  Data sourced from SAP Business Data Cloud via zero-copy integration.
+
+tables:
+  - name: PRODUCT_COST_SUMMARY
+    description: Standard vs actual cost per material per plant per period
+    base_table:
+      database: {{ database }}
+      schema: ANALYTICS
+      table: PRODUCT_COST_SUMMARY
+    primary_key:
+      columns: [MATERIAL_NUMBER, PLANT_CODE, FISCAL_YEAR, PERIOD]
+
+  - name: COST_COMPONENT_DETAIL
+    description: Cost breakdown by component (API, excipients, packaging, labour, overhead)
+    base_table:
+      database: {{ database }}
+      schema: ANALYTICS
+      table: COST_COMPONENT_DETAIL
+    primary_key:
+      columns: [MATERIAL_NUMBER, PLANT_CODE, FISCAL_YEAR, PERIOD, COST_COMPONENT]
+
+  - name: PRODUCT_PROFITABILITY
+    description: CO-PA style profitability — revenue, COGS, gross profit and margin by product and market
+    base_table:
+      database: {{ database }}
+      schema: ANALYTICS
+      table: PRODUCT_PROFITABILITY
+    primary_key:
+      columns: [MATERIAL_NUMBER, MARKET, FISCAL_YEAR, PERIOD]
+
+relationships:
+  - name: product_to_components
+    left_table: PRODUCT_COST_SUMMARY
+    right_table: COST_COMPONENT_DETAIL
+    relationship_type: one_to_many
+    join_columns:
+      - left_column: MATERIAL_NUMBER
+        right_column: MATERIAL_NUMBER
+      - left_column: PLANT_CODE
+        right_column: PLANT_CODE
+      - left_column: FISCAL_YEAR
+        right_column: FISCAL_YEAR
+      - left_column: PERIOD
+        right_column: PERIOD
+
+  - name: product_to_profitability
+    left_table: PRODUCT_COST_SUMMARY
+    right_table: PRODUCT_PROFITABILITY
+    relationship_type: one_to_many
+    join_columns:
+      - left_column: MATERIAL_NUMBER
+        right_column: MATERIAL_NUMBER
+      - left_column: FISCAL_YEAR
+        right_column: FISCAL_YEAR
+      - left_column: PERIOD
+        right_column: PERIOD
+
+metrics:
+  - name: total_standard_cost
+    description: Sum of standard cost across portfolio
+    expr: SUM(STANDARD_COST_PER_UNIT)
+    data_type: NUMBER
+    table: PRODUCT_COST_SUMMARY
+
+  - name: total_actual_cost
+    description: Sum of actual cost across portfolio
+    expr: SUM(ACTUAL_COST_PER_UNIT)
+    data_type: NUMBER
+    table: PRODUCT_COST_SUMMARY
+
+  - name: total_variance
+    description: Total cost variance (actual minus standard)
+    expr: SUM(COST_VARIANCE_ABS)
+    data_type: NUMBER
+    table: PRODUCT_COST_SUMMARY
+
+  - name: avg_variance_pct
+    description: Average cost variance percentage across portfolio
+    expr: AVG(COST_VARIANCE_PCT)
+    data_type: NUMBER
+    table: PRODUCT_COST_SUMMARY
+
+  - name: products_over_variance_threshold
+    description: Count of products with variance greater than 5%
+    expr: COUNT_IF(ABS(COST_VARIANCE_PCT) > 5)
+    data_type: NUMBER
+    table: PRODUCT_COST_SUMMARY
+
+  - name: total_revenue
+    description: Total revenue across portfolio
+    expr: SUM(REVENUE)
+    data_type: NUMBER
+    table: PRODUCT_PROFITABILITY
+
+  - name: total_gross_profit
+    description: Total gross profit (revenue minus actual COGS)
+    expr: SUM(GROSS_PROFIT_ACTUAL)
+    data_type: NUMBER
+    table: PRODUCT_PROFITABILITY
+
+  - name: avg_gross_margin_pct
+    description: Average gross margin percentage (actual)
+    expr: AVG(GROSS_MARGIN_PCT_ACTUAL)
+    data_type: NUMBER
+    table: PRODUCT_PROFITABILITY
+
+  - name: avg_margin_variance
+    description: Average margin variance vs budget in percentage points
+    expr: AVG(MARGIN_VARIANCE_PPS)
+    data_type: NUMBER
+    table: PRODUCT_PROFITABILITY
+
+  - name: total_cogs_actual
+    description: Total actual cost of goods sold
+    expr: SUM(COGS_ACTUAL)
+    data_type: NUMBER
+    table: PRODUCT_PROFITABILITY
+
+dimensions:
+  - name: material_number
+    description: SAP material number (MATNR)
+    expr: MATERIAL_NUMBER
+    data_type: TEXT
+    table: PRODUCT_COST_SUMMARY
+
+  - name: material_description
+    description: Material name / product description
+    expr: MATERIAL_DESCRIPTION
+    data_type: TEXT
+    table: PRODUCT_COST_SUMMARY
+
+  - name: material_type
+    description: "Material type: FERT=finished product, HALB=semi-finished, ROH=raw material"
+    expr: MATERIAL_TYPE
+    data_type: TEXT
+    table: PRODUCT_COST_SUMMARY
+
+  - name: plant_code
+    description: SAP plant code (WERKS)
+    expr: PLANT_CODE
+    data_type: TEXT
+    table: PRODUCT_COST_SUMMARY
+
+  - name: plant_name
+    description: Manufacturing site name
+    expr: PLANT_NAME
+    data_type: TEXT
+    table: PRODUCT_COST_SUMMARY
+
+  - name: country
+    description: Country of manufacturing site
+    expr: COUNTRY
+    data_type: TEXT
+    table: PRODUCT_COST_SUMMARY
+
+  - name: fiscal_year
+    description: Fiscal year
+    expr: FISCAL_YEAR
+    data_type: NUMBER
+    table: PRODUCT_COST_SUMMARY
+
+  - name: period
+    description: SAP posting period (001=Jan, 002=Feb etc.)
+    expr: PERIOD
+    data_type: TEXT
+    table: PRODUCT_COST_SUMMARY
+
+  - name: cost_component
+    description: Cost component (API, Excipients, Packaging, Labour, Overhead etc.)
+    expr: COST_COMPONENT
+    data_type: TEXT
+    table: COST_COMPONENT_DETAIL
+
+  - name: market
+    description: Sales market/region (United States, Europe, Japan, Emerging Markets)
+    expr: MARKET
+    data_type: TEXT
+    table: PRODUCT_PROFITABILITY
+
+verified_queries:
+  - name: highest_variance_products
+    question: Which products have the highest cost variance this quarter?
+    sql: >
+      SELECT MATERIAL_DESCRIPTION, PLANT_NAME, PERIOD,
+             STANDARD_COST_PER_UNIT, ACTUAL_COST_PER_UNIT,
+             COST_VARIANCE_PCT
+      FROM {{ database }}.ANALYTICS.PRODUCT_COST_SUMMARY
+      WHERE PERIOD = '003' AND FISCAL_YEAR = 2026
+        AND MATERIAL_TYPE = 'FERT'
+      ORDER BY ABS(COST_VARIANCE_PCT) DESC
+      LIMIT 10
+
+  - name: cost_by_component
+    question: What is the cost breakdown by component for RX-1234 at Macclesfield?
+    sql: >
+      SELECT COST_COMPONENT, STANDARD_COST, ACTUAL_COST,
+             COMPONENT_VARIANCE, COMPONENT_VARIANCE_PCT
+      FROM {{ database }}.ANALYTICS.COST_COMPONENT_DETAIL
+      WHERE MATERIAL_NUMBER = 'RX-1234-FIN'
+        AND PLANT_CODE = 'PL01'
+        AND FISCAL_YEAR = 2026
+      ORDER BY ABS(COMPONENT_VARIANCE) DESC
+
+  - name: portfolio_variance_trend
+    question: How has cost variance trended across the portfolio this year?
+    sql: >
+      SELECT PERIOD,
+             SUM(STANDARD_COST_PER_UNIT) AS TOTAL_STANDARD,
+             SUM(ACTUAL_COST_PER_UNIT)   AS TOTAL_ACTUAL,
+             AVG(COST_VARIANCE_PCT)       AS AVG_VARIANCE_PCT
+      FROM {{ database }}.ANALYTICS.PRODUCT_COST_SUMMARY
+      WHERE FISCAL_YEAR = 2026 AND MATERIAL_TYPE = 'FERT'
+      GROUP BY PERIOD
+      ORDER BY PERIOD
+
+  - name: margin_by_product_and_market
+    question: What is the gross margin by product and market?
+    sql: >
+      SELECT MATERIAL_DESCRIPTION, MARKET,
+             REVENUE, COGS_ACTUAL, GROSS_PROFIT_ACTUAL,
+             GROSS_MARGIN_PCT_ACTUAL, GROSS_MARGIN_PCT_BUDGET,
+             MARGIN_VARIANCE_PPS
+      FROM {{ database }}.ANALYTICS.PRODUCT_PROFITABILITY
+      WHERE FISCAL_YEAR = 2026
+      ORDER BY GROSS_MARGIN_PCT_ACTUAL DESC
