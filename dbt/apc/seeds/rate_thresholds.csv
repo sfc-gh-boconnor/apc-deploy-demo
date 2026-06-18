@@ -1,0 +1,7 @@
+cost_centre,activity_type,max_change_pct,description
+CC1000,MACHINE,15,Machine hours - manufacturing
+CC1000,LABOUR,15,Direct labour hours
+CC2000,MACHINE,20,Packaging machine hours
+CC2000,LABOUR,15,Packaging labour
+CC3000,QC_TEST,10,Quality control testing
+CC4000,SETUP,25,Line setup and changeover

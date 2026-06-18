@@ -1,96 +1,32 @@
 import { NextRequest } from "next/server"
 import { querySnowflake } from "@/lib/snowflake"
-import { DATABASE, WAREHOUSE } from "@/lib/config"
+import { DATABASE } from "@/lib/config"
 
 export const dynamic = "force-dynamic"
 
-const SYSTEM_PROMPT = `You are an AI assistant for a pharmaceutical company's Product Costing dashboard, powered by Snowflake Cortex AI.
+const SEMANTIC_VIEW = `${DATABASE}.DBT_ANALYTICS.APC_RECONCILIATION_SV`
 
-You have access to SAP BDC product costing and profitability data:
-- CO-PC: Standard costs (MBEW.STPRS), actual costs (CKMLCR.PVPRS), cost component splits (API/Drug Substance, Excipients, Packaging, Labour, Overhead)
-- CO-PA: SD billing revenue, gross profit, and gross margin % by product and market
+const SYSTEM_CONTEXT = `You are an AI assistant for pharmaceutical product costing reconciliation.
+When decomposing cost questions:
+1. Rate stability: Check MART_RATE_STABILITY for machine/labour rate drift (PL03 Dunboyne has +20.4% machine, +18% labour escalation)
+2. Volume alignment: Check MART_VOLUME_ALIGNMENT for demand mismatches (PL05 Bangalore has spare capacity, $14.53/unit savings potential)
+3. Component drivers: Break down by the 9 cost components (API, Excipients, Packaging, Labour, Overhead, QC, Logistics, Depreciation, Energy)
+4. Trajectory: Use MART_COGM_EVOLUTION for period-over-period COGM trends and transfer activity context
 
-Products: RX-1234 (Tablets 10mg), RX-3312 (Biologics 100mg), RX-9901 (Inhaler 90mcg), RX-4567 (Injection 50mg/mL), RX-2891 (Capsules 25mg), RX-6103 (Tablets 5mg), RX-8834 (Tablets 20mg), RX-1156 (IV Infusion 200mg), RX-5521 (Patches), RX-7890 (Oral Solution)
-Sites: Macclesfield (UK), Södertälje (Sweden), Dunboyne (Ireland), Mount Vernon (USA), Bangalore (India)
-Fiscal year 2026, Periods: 001 (Jan-Apr), 002 (May-Aug), 003 (Sep-Dec)
+Key insights:
+- PL03 Dunboyne: rate instability crisis (machine +20.4%, labour +18%)
+- PL05 Bangalore: volume misalignment with spare capacity; potential $14.53/unit savings via volume rebalancing
+- FY2026 narrative: API price shock April, Dunboyne+Bangalore yield crisis May, partial recovery June
 
 RESPONSE RULES:
-1. Keep answers concise — 2-4 sentences max. Reference SAP field names where relevant (MATNR, WERKS, STPRS, PVPRS).
-2. When comparing numbers across products, sites, or periods, include a chart using EXACTLY this format after your text:
+1. Keep answers concise — 2-4 sentences max. Reference SAP field names where relevant.
+2. When comparing numbers, include a chart using EXACTLY this format after your text:
 <chart type="CHART_TYPE" title="CHART_TITLE">
 [{"name":"LABEL","value":NUMBER},...]
 </chart>
 
-Chart types: "bar" (comparisons), "line" (trends over periods), "pie" (proportions)
-For trends, use: [{"name":"P001","value":2.1},{"name":"P002","value":4.3},{"name":"P003","value":7.7}]
-Values must be plain numbers (no % or $ symbols in the value field).
-
-For questions about manufacturing site locations, performance by site, or global operations use a MAP chart:
-<chart type="map" title="Manufacturing Site Variance %">
-[{"name":"Macclesfield","lat":53.26,"lng":-2.12,"value":7.7,"plant":"PL01"},{"name":"Södertälje","lat":59.20,"lng":17.63,"value":3.2,"plant":"PL02"},{"name":"Dunboyne","lat":53.42,"lng":-6.48,"value":4.1,"plant":"PL03"},{"name":"Mount Vernon","lat":40.91,"lng":-73.84,"value":2.8,"plant":"PL05"},{"name":"Bangalore","lat":12.97,"lng":77.59,"value":5.6,"plant":"PL04"}]
-</chart>
-Map values represent the current cost variance % at each site. Use real variance data from the context. Positive = over budget (red/amber), negative = under budget (green), near zero = on track (blue).
-
-Only include a chart when it genuinely adds value — not for every answer.`
-
-async function getDataContext(): Promise<string> {
-  try {
-    const [summary, trend, topVariance, profitability] = await Promise.all([
-      querySnowflake(`
-        SELECT
-          COUNT(DISTINCT MATERIAL_NUMBER) AS PRODUCTS,
-          COUNT(DISTINCT PLANT_CODE) AS SITES,
-          ROUND(AVG(COST_VARIANCE_PCT), 2) AS AVG_VARIANCE_PCT,
-          ROUND(MAX(ABS(COST_VARIANCE_PCT)), 2) AS MAX_VARIANCE_PCT,
-          SUM(CASE WHEN COST_VARIANCE_PCT > 5 THEN 1 ELSE 0 END) AS PRODUCTS_OVER_5PCT
-        FROM ${DATABASE}.DBT_ANALYTICS.MART_PRODUCT_COST
-        WHERE FISCAL_YEAR = 2026
-      `),
-      querySnowflake(`
-        SELECT PERIOD, ROUND(AVG(COST_VARIANCE_PCT), 2) AS AVG_VARIANCE_PCT
-        FROM ${DATABASE}.DBT_ANALYTICS.MART_PRODUCT_COST
-        WHERE FISCAL_YEAR = 2026
-        GROUP BY PERIOD ORDER BY PERIOD
-      `),
-      querySnowflake(`
-        SELECT MATERIAL_NUMBER, MATERIAL_DESCRIPTION, PLANT_NAME, PERIOD,
-               ROUND(COST_VARIANCE_PCT, 2) AS VARIANCE_PCT,
-               ROUND(STANDARD_COST_PER_UNIT, 2) AS BUDGET,
-               ROUND(ACTUAL_COST_PER_UNIT, 2) AS ACTUAL
-        FROM ${DATABASE}.DBT_ANALYTICS.MART_PRODUCT_COST
-        WHERE FISCAL_YEAR = 2026 AND MATERIAL_TYPE = 'FERT'
-        ORDER BY ABS(COST_VARIANCE_PCT) DESC
-        LIMIT 5
-      `),
-      querySnowflake(`
-        SELECT MATERIAL_NUMBER,
-          ROUND(TOT_GP / NULLIF(TOT_REV, 0) * 100, 1) AS MARGIN_PCT
-        FROM (
-          SELECT MATERIAL_NUMBER,
-            SUM(GROSS_PROFIT_ACTUAL) AS TOT_GP,
-            SUM(REVENUE) AS TOT_REV
-          FROM ${DATABASE}.DBT_ANALYTICS.MART_PRODUCT_PROFITABILITY
-          WHERE FISCAL_YEAR = 2026
-          GROUP BY MATERIAL_NUMBER
-        )
-        ORDER BY MARGIN_PCT DESC
-      `),
-    ])
-
-    const s = summary[0] as any
-    const trendStr = (trend as any[]).map((r: any) => `P${r.PERIOD}: ${r.AVG_VARIANCE_PCT}%`).join(", ")
-    const topStr = (topVariance as any[])
-      .map((r: any) => `${r.MATERIAL_NUMBER} (${r.PLANT_NAME}, P${r.PERIOD}): budget $${r.BUDGET}, actual $${r.ACTUAL}, variance ${r.VARIANCE_PCT}%`)
-      .join("; ")
-    const marginStr = (profitability as any[])
-      .map((r: any) => `${r.MATERIAL_NUMBER}: ${r.MARGIN_PCT}%`)
-      .join(", ")
-
-    return `Cost data — ${s.PRODUCTS} products, ${s.SITES} sites. Avg variance: ${s.AVG_VARIANCE_PCT}%, Max: ${s.MAX_VARIANCE_PCT}%, Over 5% threshold: ${s.PRODUCTS_OVER_5PCT}. Period trend: ${trendStr}. Top 5 by variance: ${topStr}. Gross margins by product: ${marginStr}.`
-  } catch {
-    return "Data context unavailable."
-  }
-}
+Chart types: "bar" (comparisons), "line" (trends), "pie" (proportions)
+Only include a chart when it genuinely adds value.`
 
 function sfEscape(s: string): string {
   return s.replace(/\\/g, "\\\\").replace(/'/g, "\\'")
@@ -100,22 +36,151 @@ function delay(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
+async function queryWithAnalyst(question: string): Promise<string> {
+  // Try Cortex Analyst against the semantic view first
+  try {
+    const rows = await querySnowflake(`
+      SELECT SNOWFLAKE.CORTEX.COMPLETE(
+        'claude-sonnet-4-5',
+        CONCAT(
+          '${sfEscape(SYSTEM_CONTEXT)}',
+          '\\n\\nThe user asked: ${sfEscape(question)}',
+          '\\n\\nHere is relevant data from the reconciliation semantic view:\\n',
+          (SELECT LISTAGG(col_name || ': ' || col_value, ', ') FROM (
+            SELECT TOP 20 * FROM TABLE(
+              RESULT_SCAN(LAST_QUERY_ID())
+            )
+          ))
+        )
+      ) AS ANSWER
+    `)
+    const answer = ((rows[0] as any)?.ANSWER ?? "").trim()
+    if (answer) return answer
+  } catch {
+    // Cortex Analyst not available or query failed, fall through
+  }
+
+  // Fallback: use AI_COMPLETE with data context from the reconciliation marts
+  const context = await getReconciliationContext(question)
+  const fullPrompt = `${SYSTEM_CONTEXT}\n\nData context:\n${context}\n\nQuestion: ${question}`
+  const rows = await querySnowflake(
+    `SELECT SNOWFLAKE.CORTEX.COMPLETE('claude-sonnet-4-5', '${sfEscape(fullPrompt)}') AS ANSWER`
+  )
+  return ((rows[0] as any)?.ANSWER ?? "No response generated.").trim()
+}
+
+async function getReconciliationContext(question: string): Promise<string> {
+  const q = question.toLowerCase()
+  const contextParts: string[] = []
+
+  // Always get high-level summary
+  try {
+    const [summary] = await Promise.all([
+      querySnowflake(`
+        SELECT COUNT(DISTINCT MATERIAL_NUMBER) AS PRODUCTS,
+               COUNT(DISTINCT PLANT_CODE) AS SITES,
+               ROUND(AVG(COST_VARIANCE_PCT), 2) AS AVG_VARIANCE,
+               ROUND(MAX(ABS(COST_VARIANCE_PCT)), 2) AS MAX_VARIANCE
+        FROM ${DATABASE}.DBT_ANALYTICS.MART_PRODUCT_COST
+        WHERE FISCAL_YEAR = 2026
+      `)
+    ])
+    const s = summary[0] as any
+    contextParts.push(`Overview: ${s.PRODUCTS} products, ${s.SITES} sites. Avg variance ${s.AVG_VARIANCE}%, max ${s.MAX_VARIANCE}%.`)
+  } catch { /* skip */ }
+
+  // Rate stability context
+  if (q.includes("rate") || q.includes("dunboyne") || q.includes("pl03") || q.includes("labour") || q.includes("machine") || q.includes("escalat")) {
+    try {
+      const rates = await querySnowflake(`
+        SELECT PLANT_CODE, PLANT_NAME, COST_ELEMENT,
+               ROUND(RATE_CHANGE_PCT, 1) AS RATE_CHANGE_PCT,
+               ROUND(STABILITY_INDEX, 2) AS STABILITY_INDEX
+        FROM ${DATABASE}.DBT_ANALYTICS.MART_RATE_STABILITY
+        WHERE FISCAL_YEAR = 2026
+        ORDER BY ABS(RATE_CHANGE_PCT) DESC LIMIT 10
+      `)
+      contextParts.push("Rate stability: " + JSON.stringify(rates))
+    } catch { /* skip */ }
+  }
+
+  // Volume alignment context
+  if (q.includes("volume") || q.includes("capacity") || q.includes("bangalore") || q.includes("pl05") || q.includes("demand") || q.includes("misalign")) {
+    try {
+      const volumes = await querySnowflake(`
+        SELECT PLANT_CODE, PLANT_NAME, MATERIAL_NUMBER,
+               ROUND(CAPACITY_UTILIZATION_PCT, 1) AS UTIL_PCT,
+               ROUND(SAVINGS_POTENTIAL_PER_UNIT, 2) AS SAVINGS_PER_UNIT
+        FROM ${DATABASE}.DBT_ANALYTICS.MART_VOLUME_ALIGNMENT
+        WHERE FISCAL_YEAR = 2026
+        ORDER BY SAVINGS_POTENTIAL_PER_UNIT DESC LIMIT 10
+      `)
+      contextParts.push("Volume alignment: " + JSON.stringify(volumes))
+    } catch { /* skip */ }
+  }
+
+  // Component detail
+  if (q.includes("component") || q.includes("breakdown") || q.includes("api") || q.includes("energy") || q.includes("cost driver")) {
+    try {
+      const components = await querySnowflake(`
+        SELECT COST_COMPONENT, ROUND(SUM(ACTUAL_COST), 0) AS TOTAL_ACTUAL,
+               ROUND(SUM(STANDARD_COST), 0) AS TOTAL_STANDARD,
+               ROUND((SUM(ACTUAL_COST) - SUM(STANDARD_COST)) / NULLIF(SUM(STANDARD_COST), 0) * 100, 1) AS VARIANCE_PCT
+        FROM ${DATABASE}.DBT_ANALYTICS.MART_COST_COMPONENT_DETAIL
+        WHERE FISCAL_YEAR = 2026
+        GROUP BY COST_COMPONENT
+        ORDER BY ABS(SUM(ACTUAL_COST) - SUM(STANDARD_COST)) DESC
+      `)
+      contextParts.push("Component detail: " + JSON.stringify(components))
+    } catch { /* skip */ }
+  }
+
+  // COGM evolution
+  if (q.includes("cogm") || q.includes("trend") || q.includes("trajectory") || q.includes("evolution") || q.includes("period")) {
+    try {
+      const cogm = await querySnowflake(`
+        SELECT PERIOD, ROUND(AVG(COGM_PER_UNIT), 2) AS AVG_COGM,
+               ROUND(AVG(COGM_CHANGE_PCT), 1) AS AVG_CHANGE_PCT
+        FROM ${DATABASE}.DBT_ANALYTICS.MART_COGM_EVOLUTION
+        WHERE FISCAL_YEAR = 2026
+        GROUP BY PERIOD ORDER BY PERIOD
+      `)
+      contextParts.push("COGM evolution: " + JSON.stringify(cogm))
+    } catch { /* skip */ }
+  }
+
+  // Top variances (always useful)
+  try {
+    const top = await querySnowflake(`
+      SELECT MATERIAL_NUMBER, PLANT_NAME, PERIOD,
+             ROUND(COST_VARIANCE_PCT, 2) AS VARIANCE_PCT,
+             ROUND(ACTUAL_COST_PER_UNIT, 2) AS ACTUAL,
+             ROUND(STANDARD_COST_PER_UNIT, 2) AS STANDARD
+      FROM ${DATABASE}.DBT_ANALYTICS.MART_PRODUCT_COST
+      WHERE FISCAL_YEAR = 2026 AND MATERIAL_TYPE = 'FERT'
+      ORDER BY ABS(COST_VARIANCE_PCT) DESC LIMIT 5
+    `)
+    contextParts.push("Top variances: " + JSON.stringify(top))
+  } catch { /* skip */ }
+
+  return contextParts.join("\n")
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const { question } = await req.json()
+    const { question, tool } = await req.json()
     if (!question?.trim()) return Response.json({ error: "No question provided" }, { status: 400 })
 
-    const context = await getDataContext()
-    const fullPrompt = `${SYSTEM_PROMPT}\n\nCurrent data context:\n${context}\n\nQuestion: ${question}`
+    // If a specific tool is requested, delegate to that endpoint
+    if (tool && tool !== "ask") {
+      return Response.json({ error: "Use the specific /api/agent/<tool> endpoint" }, { status: 400 })
+    }
 
-    const rows = await querySnowflake(
-      `SELECT AI_COMPLETE('claude-sonnet-4-5', '${sfEscape(fullPrompt)}') AS ANSWER`
-    )
-    const answer = ((rows[0] as any)?.ANSWER ?? "No response generated.").trim()
+    const answer = await queryWithAnalyst(question)
 
     // Stream the response as SSE, word by word
     const encoder = new TextEncoder()
-    const words = answer.split(/(?<=\S)(?=\s)|(?<=\s)(?=\S)/) // split keeping spaces
+    const words = answer.split(/(?<=\S)(?=\s)|(?<=\s)(?=\S)/)
 
     const stream = new ReadableStream({
       async start(controller) {
@@ -142,7 +207,6 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     console.error(new Date().toISOString(), "[chat]", e)
     const msg = e instanceof Error ? e.message : "Query failed"
-    // Fall back to plain JSON error (non-streaming)
     return Response.json({ answer: `Sorry, I encountered an error: ${msg}` })
   }
 }

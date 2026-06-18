@@ -58,3 +58,63 @@ models:
         tests: [not_null]
       - name: net_revenue
         tests: [not_null]
+
+  - name: stg_bom_header
+    description: "BOM headers — one active production BOM per material/plant."
+    columns:
+      - name: material_number
+        tests: [not_null]
+      - name: bom_number
+        tests: [not_null]
+
+  - name: stg_bom_items
+    description: "BOM line items — components, quantities, scrap allowances."
+    columns:
+      - name: bom_number
+        tests: [not_null]
+      - name: component_material
+        tests: [not_null]
+
+  - name: stg_routings
+    description: "Production routings — operations, work centres, activity types and quantities."
+    columns:
+      - name: material_number
+        tests: [not_null]
+      - name: plant_code
+        tests: [not_null]
+
+  - name: stg_activity_rates
+    description: "Cost centre activity rates (plan + actual) per activity type and fiscal year."
+    columns:
+      - name: cost_centre
+        tests: [not_null]
+      - name: activity_type
+        tests: [not_null]
+      - name: total_rate
+        tests: [not_null]
+
+  - name: stg_apo_planned_volume
+    description: "APO/IBP demand plan — planned production and commercial forecast volumes."
+    columns:
+      - name: material_number
+        tests: [not_null]
+      - name: planned_production_qty
+        tests: [not_null]
+
+  - name: stg_value_chain
+    description: "Value chain site-to-site flow with intercompany markup and transport costs."
+    columns:
+      - name: material_number
+        tests: [not_null]
+      - name: source_plant
+        tests: [not_null]
+      - name: destination_plant
+        tests: [not_null]
+
+  - name: stg_scc_adjustments
+    description: "Posted SCC adjustments from SOAR — markups, allocations, revaluations."
+    columns:
+      - name: material_number
+        tests: [not_null]
+      - name: adjustment_amount
+        tests: [not_null]

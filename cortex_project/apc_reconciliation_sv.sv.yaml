@@ -1,0 +1,251 @@
+name: APC_RECONCILIATION_SV
+description: "AI Product Costing - Reconciliation and Driver Analysis. Answers why cost is over standard, which plants have rate instability, where demand is misaligned, and which product lines are escalating."
+
+tables:
+  - name: MART_PRODUCT_COST
+    description: "Standard vs actual cost per material, plant, period. 3-way comparison with variance flags."
+    base_table:
+      database: APC_DEPLOY_DB
+      schema: DBT_ANALYTICS
+      table: MART_PRODUCT_COST
+    dimensions:
+      - name: MATERIAL_NUMBER
+        description: SAP material number
+        expr: MATERIAL_NUMBER
+        data_type: TEXT
+      - name: MATERIAL_DESCRIPTION
+        description: Product name
+        expr: MATERIAL_DESCRIPTION
+        data_type: TEXT
+      - name: PLANT_CODE
+        description: Manufacturing site code (PL01 through PL05)
+        expr: PLANT_CODE
+        data_type: TEXT
+      - name: PLANT_NAME
+        description: Manufacturing site name
+        expr: PLANT_NAME
+        data_type: TEXT
+      - name: COUNTRY
+        description: Country of manufacturing site
+        expr: COUNTRY
+        data_type: TEXT
+      - name: FISCAL_YEAR
+        description: Fiscal year
+        expr: FISCAL_YEAR
+        data_type: NUMBER
+      - name: PERIOD
+        description: SAP posting period 001 through 012
+        expr: PERIOD
+        data_type: TEXT
+      - name: VARIANCE_FLAG
+        description: HIGH above 5 percent, MEDIUM 3 to 5 percent, LOW below 3 percent
+        expr: VARIANCE_FLAG
+        data_type: TEXT
+        is_enum: true
+    facts:
+      - name: ACTUAL_COST_PER_UNIT
+        description: Actual cost per unit in USD
+        expr: ACTUAL_COST_PER_UNIT
+        data_type: NUMBER
+      - name: STANDARD_COST_PER_UNIT
+        description: Standard cost per unit in USD
+        expr: STANDARD_COST_PER_UNIT
+        data_type: NUMBER
+      - name: COST_VARIANCE_PCT
+        description: Variance percentage actual minus standard divided by standard
+        expr: COST_VARIANCE_PCT
+        data_type: NUMBER
+    metrics:
+      - name: avg_variance_pct
+        description: Average cost variance percentage across portfolio
+        expr: AVG(COST_VARIANCE_PCT)
+      - name: high_variance_count
+        description: Count of products with variance greater than 5 percent
+        expr: COUNT_IF(ABS(COST_VARIANCE_PCT) > 5)
+
+  - name: MART_RATE_STABILITY
+    description: "Activity rate movement tracking by cost centre. Flags UNSTABLE rates above 15 percent YoY change that drive cost escalation."
+    base_table:
+      database: APC_DEPLOY_DB
+      schema: DBT_ANALYTICS
+      table: MART_RATE_STABILITY
+    dimensions:
+      - name: COST_CENTRE
+        description: SAP cost centre. CC-MFG is manufacturing, CC-PKG is packaging.
+        expr: COST_CENTRE
+        data_type: TEXT
+      - name: ACTIVITY_TYPE
+        description: MACHINE or LABOUR
+        expr: ACTIVITY_TYPE
+        data_type: TEXT
+        is_enum: true
+      - name: RS_PLANT_CODE
+        description: Plant code
+        expr: PLANT_CODE
+        data_type: TEXT
+      - name: RS_PLANT_NAME
+        description: Plant name
+        expr: PLANT_NAME
+        data_type: TEXT
+      - name: RS_FISCAL_YEAR
+        description: Fiscal year
+        expr: FISCAL_YEAR
+        data_type: NUMBER
+      - name: STABILITY_STATUS
+        description: STABLE or WATCH or UNSTABLE or NEW_RATE
+        expr: STABILITY_STATUS
+        data_type: TEXT
+        is_enum: true
+      - name: RECOMMENDED_ACTION
+        description: OK or MONITOR or ACTION_REQUIRED
+        expr: RECOMMENDED_ACTION
+        data_type: TEXT
+        is_enum: true
+    facts:
+      - name: CURRENT_RATE
+        description: Current year plan rate in dollars per hour
+        expr: CURRENT_RATE
+        data_type: NUMBER
+      - name: PRIOR_RATE
+        description: Prior year plan rate in dollars per hour
+        expr: PRIOR_RATE
+        data_type: NUMBER
+      - name: RATE_CHANGE_PCT
+        description: Year-over-year rate change percentage
+        expr: RATE_CHANGE_PCT
+        data_type: NUMBER
+
+  - name: MART_VOLUME_ALIGNMENT
+    description: "Three-way volume reconciliation APO planned vs commercial forecast vs actual billing. Flags demand misalignment by plant."
+    base_table:
+      database: APC_DEPLOY_DB
+      schema: DBT_ANALYTICS
+      table: MART_VOLUME_ALIGNMENT
+    dimensions:
+      - name: VA_MATERIAL_NUMBER
+        description: SAP material number
+        expr: MATERIAL_NUMBER
+        data_type: TEXT
+      - name: VA_PLANT_CODE
+        description: Plant code
+        expr: PLANT_CODE
+        data_type: TEXT
+      - name: VA_FISCAL_YEAR
+        description: Fiscal year
+        expr: FISCAL_YEAR
+        data_type: NUMBER
+      - name: VA_PERIOD
+        description: Period
+        expr: PERIOD
+        data_type: NUMBER
+      - name: ALIGNMENT_STATUS
+        description: ALIGNED or MEDIUM_DEVIATION or HIGH_DEVIATION or UNPLANNED_DEMAND
+        expr: ALIGNMENT_STATUS
+        data_type: TEXT
+        is_enum: true
+    facts:
+      - name: PLANNED_PRODUCTION_QTY
+        description: APO planned production volume in units
+        expr: PLANNED_PRODUCTION_QTY
+        data_type: NUMBER
+      - name: ACTUAL_BILLED_QTY
+        description: Actual billed shipped quantity in units
+        expr: ACTUAL_BILLED_QTY
+        data_type: NUMBER
+      - name: PLAN_ACCURACY_PCT
+        description: Plan accuracy percentage positive means over-planned
+        expr: PLAN_ACCURACY_PCT
+        data_type: NUMBER
+      - name: REVENUE_GAP_ESTIMATE
+        description: Revenue impact of volume misalignment in dollars
+        expr: REVENUE_GAP_ESTIMATE
+        data_type: NUMBER
+
+  - name: MART_COGM_EVOLUTION
+    description: "Cost of goods manufactured by brand and therapeutic area over time. Shows cost trajectory for volume rebalancing decisions."
+    base_table:
+      database: APC_DEPLOY_DB
+      schema: DBT_ANALYTICS
+      table: MART_COGM_EVOLUTION
+    dimensions:
+      - name: CE_MATERIAL_NUMBER
+        description: SAP material number
+        expr: MATERIAL_NUMBER
+        data_type: TEXT
+      - name: CE_PLANT_CODE
+        description: Plant code
+        expr: PLANT_CODE
+        data_type: TEXT
+      - name: CE_FISCAL_YEAR
+        description: Fiscal year
+        expr: FISCAL_YEAR
+        data_type: NUMBER
+      - name: CE_PERIOD
+        description: Period
+        expr: PERIOD
+        data_type: TEXT
+      - name: BRAND
+        description: Product brand name
+        expr: BRAND
+        data_type: TEXT
+      - name: THERAPEUTIC_AREA
+        description: Oncology or Respiratory or Cardiovascular or Gastroenterology
+        expr: THERAPEUTIC_AREA
+        data_type: TEXT
+        is_enum: true
+      - name: COST_TRAJECTORY
+        description: ESCALATING or IMPROVING or STABLE
+        expr: COST_TRAJECTORY
+        data_type: TEXT
+        is_enum: true
+    facts:
+      - name: CE_ACTUAL_COST
+        description: Actual cost per unit in USD
+        expr: ACTUAL_COST_PER_UNIT
+        data_type: NUMBER
+      - name: CE_STANDARD_COST
+        description: Standard cost per unit in USD
+        expr: STANDARD_COST_PER_UNIT
+        data_type: NUMBER
+      - name: COST_CHANGE_VS_PRIOR
+        description: Period-over-period cost change in dollars per unit
+        expr: COST_CHANGE_VS_PRIOR
+        data_type: NUMBER
+      - name: ROLLING_3M_AVG_COST
+        description: Rolling 3-month average cost in dollars per unit
+        expr: ROLLING_3M_AVG_COST
+        data_type: NUMBER
+
+verified_queries:
+  - name: pl03_rate_instability
+    question: Why are Dunboyne PL03 costs escalating?
+    sql: "SELECT COST_CENTRE, ACTIVITY_TYPE, CURRENT_RATE, PRIOR_RATE, RATE_CHANGE_PCT, STABILITY_STATUS, RECOMMENDED_ACTION FROM APC_DEPLOY_DB.DBT_ANALYTICS.MART_RATE_STABILITY WHERE PLANT_CODE = 'PL03' AND STABILITY_STATUS = 'UNSTABLE' ORDER BY RATE_CHANGE_PCT DESC"
+    use_as_onboarding_question: true
+
+  - name: volume_misalignment
+    question: Which plants have volume misalignment between plan and actual?
+    sql: "SELECT PLANT_CODE, ALIGNMENT_STATUS, COUNT(*) AS periods_flagged, ROUND(AVG(PLAN_ACCURACY_PCT), 1) AS avg_plan_accuracy, ROUND(SUM(REVENUE_GAP_ESTIMATE), 0) AS total_revenue_at_risk FROM APC_DEPLOY_DB.DBT_ANALYTICS.MART_VOLUME_ALIGNMENT WHERE ALIGNMENT_STATUS IN ('HIGH_DEVIATION', 'MEDIUM_DEVIATION') GROUP BY PLANT_CODE, ALIGNMENT_STATUS ORDER BY total_revenue_at_risk"
+    use_as_onboarding_question: true
+
+  - name: cost_by_therapy
+    question: Which therapeutic areas are seeing cost escalation?
+    sql: "SELECT THERAPEUTIC_AREA, PLANT_CODE, ROUND(AVG(ACTUAL_COST_PER_UNIT), 2) AS avg_cost, ROUND(AVG(COST_VARIANCE_PCT), 1) AS avg_variance, COUNT(CASE WHEN COST_TRAJECTORY = 'ESCALATING' THEN 1 END) AS escalating_periods FROM APC_DEPLOY_DB.DBT_ANALYTICS.MART_COGM_EVOLUTION WHERE FISCAL_YEAR = 2026 AND THERAPEUTIC_AREA IS NOT NULL GROUP BY THERAPEUTIC_AREA, PLANT_CODE ORDER BY avg_variance DESC"
+    use_as_onboarding_question: true
+
+  - name: highest_variance
+    question: Which products have the highest cost variance?
+    sql: "SELECT MATERIAL_DESCRIPTION, PLANT_NAME, PERIOD, ROUND(ACTUAL_COST_PER_UNIT, 2) AS actual_cost, ROUND(STANDARD_COST_PER_UNIT, 2) AS standard_cost, ROUND(COST_VARIANCE_PCT, 1) AS variance_pct, VARIANCE_FLAG FROM APC_DEPLOY_DB.DBT_ANALYTICS.MART_PRODUCT_COST WHERE FISCAL_YEAR = 2026 AND MATERIAL_TYPE = 'FERT' QUALIFY ROW_NUMBER() OVER (PARTITION BY MATERIAL_NUMBER, PLANT_CODE ORDER BY PERIOD DESC) = 1 ORDER BY ABS(COST_VARIANCE_PCT) DESC LIMIT 15"
+
+module_custom_instructions:
+  sql_generation: |
+    This semantic view supports product cost reconciliation for pharmaceutical manufacturing.
+    Key context: PL03 (Dunboyne Ireland) has unstable activity rates driving 20-33% cost variance.
+    PL05 (Bangalore India) has the lowest rates and spare capacity.
+    When asked about cost drivers, check MART_RATE_STABILITY for rate changes and MART_VOLUME_ALIGNMENT for demand misalignment.
+    When asked about savings or rebalancing, compare costs between PL03 and PL05 using MART_COGM_EVOLUTION.
+    Respiratory products (Fasenra, Breztri, Symbicort, Saphnelo) and Oncology products (Enhertu, Tagrisso, Lynparza) are the key therapeutic areas.
+    Always round monetary values to 2 decimal places and percentages to 1 decimal place.
+  question_categorization: |
+    If the question is about why costs are high or what is driving variance, this is a reconciliation question - answer it.
+    If the question is about HR, salaries, or employee data, reject it as out of scope.
+    If the question is about a specific plant without naming it, ask which plant they mean.

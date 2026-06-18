@@ -87,3 +87,59 @@ models:
         tests:
           - accepted_values:
               values: ['actual', 'forecast']
+
+  - name: mart_bom_cost_buildup
+    description: "Full costed BOM roll-up per finished product — material + conversion + estimated overhead by level."
+    columns:
+      - name: material_number
+        tests: [not_null]
+      - name: bom_total_cost_usd
+        tests: [not_null]
+
+  - name: mart_fmc_vs_bom
+    description: "FMC reported cost vs BOM-exploded cost — variance highlights data quality gaps (missing BOMs, cost build-up issues)."
+    columns:
+      - name: material_number
+        tests: [not_null]
+      - name: reconciliation_status
+        tests:
+          - accepted_values:
+              values: ['RECONCILED', 'MEDIUM_VARIANCE', 'HIGH_VARIANCE', 'MISSING_BOM', 'MISSING_FMC']
+
+  - name: mart_volume_alignment
+    description: "Volume alignment dashboard — APO planned vs commercial forecast vs actual billing, with revenue gap estimates."
+    columns:
+      - name: material_number
+        tests: [not_null]
+      - name: alignment_status
+        tests:
+          - accepted_values:
+              values: ['ALIGNED', 'HIGH_DEVIATION', 'MEDIUM_DEVIATION', 'NO_BILLING', 'UNPLANNED_DEMAND']
+
+  - name: mart_value_chain_pnl
+    description: "Value chain P&L — CO-PA by value chain step showing interco margins, transport, SCC adjustments, and end-to-end margin."
+    columns:
+      - name: material_number
+        tests: [not_null]
+      - name: chain_step
+        tests: [not_null]
+
+  - name: mart_cogm_evolution
+    description: "COGM evolution tracked by site/brand/country/TA over time — cost trajectory with rolling averages."
+    columns:
+      - name: material_number
+        tests: [not_null]
+      - name: cost_trajectory
+        tests:
+          - accepted_values:
+              values: ['ESCALATING', 'IMPROVING', 'STABLE']
+
+  - name: mart_rate_stability
+    description: "Activity rate movement tracking — flags unstable rates that may indicate data quality or planning issues."
+    columns:
+      - name: cost_centre
+        tests: [not_null]
+      - name: stability_status
+        tests:
+          - accepted_values:
+              values: ['STABLE', 'WATCH', 'UNSTABLE', 'NEW_RATE']

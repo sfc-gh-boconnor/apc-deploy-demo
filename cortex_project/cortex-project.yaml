@@ -1,0 +1,10 @@
+version: 1
+artifacts:
+  - path: apc_reconciliation_sv.sv.yaml
+    type: semantic_view
+    targets:
+      default:
+        object: APC_DEPLOY_DB.DBT_ANALYTICS.APC_RECONCILIATION_SV
+  - path: apc_reconciliation_agent.agent.yaml
+    type: cortex_agent
+    targets: {}

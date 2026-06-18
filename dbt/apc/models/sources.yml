@@ -18,6 +18,20 @@ sources:
         description: "Plant master with company code + local currency."
       - name: TCURR_RAW
         description: "FX rates FCURR -> USD, monthly, with SAP inverted GDATU date."
+      - name: STKO_RAW
+        description: "BOM header (STKO) — one row per BOM per material/plant. Usage, validity, base qty."
+      - name: STPO_RAW
+        description: "BOM line items (STPO) — components, quantities, scrap %, item categories."
+      - name: PLPO_RAW
+        description: "Routing operations (PLPO) — work centres, activity types, times per operation."
+      - name: KSPI_RAW
+        description: "Cost centre activity rates (KP26/KSPI) — plan + actual rates per activity type."
+      - name: APO_DEMAND_RAW
+        description: "APO/IBP demand plan — planned production, confirmed, and commercial forecast volumes by material/plant/period."
+      - name: VALUE_CHAIN_RAW
+        description: "Value chain configuration (APO PDS) — site-to-site production flow, chain steps, interco markups."
+      - name: SCC_ADJUSTMENTS_RAW
+        description: "SCC manual adjustments from SOAR — transfer pricing markups, allocations, revaluations."
 
   - name: sap_bdc
     description: "SAP BDC data products that are already analysis-shaped (used as-is as sources)."

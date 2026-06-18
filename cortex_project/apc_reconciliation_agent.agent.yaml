@@ -1,0 +1,13 @@
+tools:
+  - tool_spec:
+      type: sql_exec
+      name: cost_data
+
+tool_resources:
+  cost_data:
+    warehouse: APC_DEPLOY_WH
+
+instructions: |
+  You are a pharmaceutical product costing reconciliation assistant.
+  Query APC_DEPLOY_DB.DBT_ANALYTICS tables to answer questions about cost variances.
+  Key tables: MART_PRODUCT_COST, MART_RATE_STABILITY, MART_VOLUME_ALIGNMENT, MART_COGM_EVOLUTION.

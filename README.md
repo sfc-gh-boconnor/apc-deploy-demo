@@ -7,9 +7,7 @@ Snowflake demo accelerator for **SAP product costing & profitability** at a phar
 ---
 
 ## Skills — your interface to this demo
-
 Every action in this accelerator is driven by a Cortex Code skill. Type the skill name in the CoCo chat panel to begin.
-
 | Skill | What it does | Components touched | R/W |
 |-------|--------------|--------------------|-----|
 | `/apc-github-setup` | Connect this repo as a Snowflake Workspace | Git repository, API integration, secret | W |
@@ -21,13 +19,10 @@ Every action in this accelerator is driven by a Cortex Code skill. Type the skil
 | `/apc-data-engineering` | Describe a change → edit → validate → deploy SQL Dynamic Tables | `sql/`, `ENGINEERING` schema | W |
 | `/apc-new-pipeline` | Scaffold a new staging → curated → mart Dynamic Table pipeline | `sql/`, `ENGINEERING` schema | W |
 | `/apc-external-integration` | Add outbound HTTPS access (network rule + integration) | Network rules, external access integrations | W |
-
 ---
 
 ## Component map
-
 Each component shows which skill(s) manage it.
-
 | Component | Description | Managed by |
 |-----------|-------------|------------|
 | `APC_DEPLOY_DB.SAP_RAW` | Raw messy SAP extracts (dbt source) | `/apc-deploy` (setup) · `/apc-dbt-demo` (full-refresh) |
@@ -38,12 +33,23 @@ Each component shows which skill(s) manage it.
 | React app / SPCS (`app-ui/`) | Next.js dashboard — 8 tabs, Cortex AI chat | `/apc-deploy` (deploy) · `/apc-cleanup` (teardown) |
 | `dbt/apc/` | Native dbt project (`snow dbt`) | `/apc-dbt-demo` · `/apc-external-integration` (if external access needed) |
 | GitHub Workspace | Repo-backed Workspace for in-browser development | `/apc-github-setup` |
-
 **Dashboard tabs:** Variance Analysis · Scenario Analysis · Profitability · Sales Forecast · Smart Insights · Ask Cortex AI · Data Engineering · Observability & Trust
-
 ---
 
 ## Architecture
+### 1. Fork & open in a Workspace
+
+1. **Fork this repo** to your own GitHub account (or organisation) — this gives you full read/write access to push changes
+2. In Snowsight, go to **Workspaces** → **Create Workspace** → **From Git Repository**
+3. Connect your fork (you'll need a GitHub PAT with `repo` scope for read+write — see the `apc-github-setup` skill for full integration setup)
+4. Once the Workspace opens, you have `snow` CLI built in and are already authenticated — no `-c` flag needed
+5. Any edits you make in the Workspace can be committed and pushed back to your fork
+
+Alternatively, clone locally and add `-c <your-connection>` to all `snow` commands.
+
+### 2. Deploy the accelerator
+
+The **`apc-deploy`** skill handles everything. In CoCo chat:
 
 ```
 SAP_RAW ──────────────────┐
@@ -54,18 +60,15 @@ ENERGY_MARKET ──► dbt Pipeline (snow dbt) ──► DBT_ANALYTICS (Dynamic
                                                [8-tab dashboard]
                                                         │
 SCENARIO_INPUTS ──────────────────────────────► Scenario Forecast APIs
-
 DBT_ANALYTICS ──► ML_FEATURE_STORE ──► 4 registered models
                   (feature views,       (variance, cost, yield, profitability)
                    training datasets)
-
 APC_SV.yaml (semantic model) ──► Cortex Analyst ──► Ask AI tab
 ```
 
 ---
 
 ## Repository layout (reference)
-
 | Path | What it is |
 |------|------------|
 | `sql/` | Numbered setup scripts (01–05, 09–11) |

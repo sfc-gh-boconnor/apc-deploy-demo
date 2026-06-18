@@ -26,3 +26,49 @@ models:
     columns:
       - name: material_number
         tests: [not_null]
+
+  - name: int_bom_explosion
+    description: "Recursive multi-level BOM explosion — all components with cumulative effective quantities and scrap."
+    columns:
+      - name: root_material
+        tests: [not_null]
+      - name: component_material
+        tests: [not_null]
+      - name: bom_level
+        tests: [not_null]
+
+  - name: int_bom_costed
+    description: "Costed BOM — material cost + conversion cost per component at each level."
+    columns:
+      - name: root_material
+        tests: [not_null]
+      - name: total_component_cost_usd
+        tests: [not_null]
+
+  - name: int_volume_reconciliation
+    description: "Three-way volume reconciliation: APO planned vs commercial forecast vs actual billing."
+    columns:
+      - name: material_number
+        tests: [not_null]
+      - name: alignment_status
+        tests:
+          - accepted_values:
+              values: ['ALIGNED', 'HIGH_DEVIATION', 'MEDIUM_DEVIATION', 'NO_BILLING', 'UNPLANNED_DEMAND']
+
+  - name: int_value_chain_allocation
+    description: "Value chain cost build-up with intercompany transfer pricing and SCC adjustments per step."
+    columns:
+      - name: material_number
+        tests: [not_null]
+      - name: chain_step
+        tests: [not_null]
+
+  - name: int_activity_rate_validation
+    description: "Activity rate stability validation — compares current vs prior year rates and flags instability."
+    columns:
+      - name: cost_centre
+        tests: [not_null]
+      - name: stability_status
+        tests:
+          - accepted_values:
+              values: ['STABLE', 'WATCH', 'UNSTABLE', 'NEW_RATE']
