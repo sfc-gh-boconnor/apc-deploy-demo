@@ -340,7 +340,8 @@ module_custom_instructions:
     When asked about savings or rebalancing, compare costs between PL03 and PL05 using MART_COGM_EVOLUTION.
     When asked about anomalies or outliers, query MART_COST_ANOMALIES filtering by Z_SCORE or IS_ANOMALY.
     CRITICAL: MART_COST_ANOMALIES does NOT have PLANT_CODE. It only has PLANT_NAME. To filter by plant, use PLANT_NAME (e.g. WHERE PLANT_NAME ILIKE '%Dunboyne%'). Do NOT join MART_COST_ANOMALIES with other tables on PLANT_CODE.
-    VARIANCE_FORECAST does NOT have PLANT_CODE or PLANT_NAME. It only has MATERIAL_NUMBER and TS.
+    CRITICAL: VARIANCE_FORECAST does NOT have PLANT_CODE or PLANT_NAME. It only has MATERIAL_NUMBER and TS. Do NOT join VARIANCE_FORECAST with tables using PLANT_CODE.
+    CRITICAL: Do NOT join tables unless they share a common column. Each table should be queried independently. The only safe join keys are MATERIAL_NUMBER (shared by most tables) and PLANT_CODE (only on MART_PRODUCT_COST, MART_COGM_EVOLUTION, MART_RATE_STABILITY, MART_VOLUME_ALIGNMENT — NOT on MART_COST_ANOMALIES or VARIANCE_FORECAST).
     When asked about forecasts or confidence intervals, query VARIANCE_FORECAST. CI = AVG_ACTUAL_COST +/- (CROSS_PLANT_VOLATILITY/100 * 1.96 * AVG_ACTUAL_COST).
     Always round monetary values to 2 decimal places and percentages to 1 decimal place.
   question_categorization: |
@@ -414,3 +415,26 @@ verified_queries:
       WHERE TS >= '2026-04-01'
       ORDER BY VARIANCE_PCT DESC LIMIT 15
     use_as_onboarding_question: true
+  - name: VOLUME_MISALIGNMENT_BY_PLANT
+    question: Which plants have volume misalignment?
+    sql: >-
+      SELECT PLANT_CODE, ALIGNMENT_STATUS,
+      COUNT(*) AS periods_flagged,
+      ROUND(AVG(PLAN_ACCURACY_PCT), 1) AS avg_plan_accuracy,
+      ROUND(SUM(REVENUE_GAP_ESTIMATE), 0) AS total_revenue_at_risk
+      FROM APC_DEPLOY_DB.DBT_ANALYTICS.MART_VOLUME_ALIGNMENT
+      WHERE FISCAL_YEAR = 2026
+      GROUP BY PLANT_CODE, ALIGNMENT_STATUS
+      ORDER BY total_revenue_at_risk DESC
+    use_as_onboarding_question: true
+  - name: ANOMALIES_BY_PLANT
+    question: Show anomalies at Dunboyne
+    sql: >-
+      SELECT MATERIAL_DESCRIPTION, PLANT_NAME, COST_COMPONENT, PERIOD,
+      ROUND(ACTUAL_COST, 2) AS actual_cost, ROUND(STANDARD_COST, 2) AS standard_cost,
+      ROUND(Z_SCORE, 2) AS z_score
+      FROM APC_DEPLOY_DB.DBT_ANALYTICS.MART_COST_ANOMALIES
+      WHERE FISCAL_YEAR = 2026 AND IS_ANOMALY = TRUE
+      AND PLANT_NAME ILIKE '%Dunboyne%'
+      ORDER BY ABS(Z_SCORE) DESC LIMIT 15
+    use_as_onboarding_question: false

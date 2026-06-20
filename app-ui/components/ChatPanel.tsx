@@ -26,19 +26,32 @@ const SUGGESTED = [
 
 /* ─── Thinking Block (collapsible) ─── */
 
-function ThinkingBlock({ text }: { text: string }) {
-  const [open, setOpen] = useState(false)
-  if (!text) return null
+function ThinkingBlock({ text, isStreaming }: { text: string; isStreaming?: boolean }) {
+  const [manualToggle, setManualToggle] = useState<boolean | null>(null)
+  const [dots, setDots] = useState("")
+  
+  useEffect(() => {
+    if (!isStreaming) return
+    const id = setInterval(() => setDots(d => d.length >= 3 ? "" : d + "."), 400)
+    return () => clearInterval(id)
+  }, [isStreaming])
+
+  if (!text && !isStreaming) return null
+
+  const isOpen = manualToggle !== null ? manualToggle : true
+  const displayText = text || `Connecting to agent${dots}`
+
   return (
     <div className="thinking-block">
-      <button className="thinking-toggle" onClick={() => setOpen(!open)}>
-        <span className="thinking-icon">{open ? "▾" : "▸"}</span>
+      <button className="thinking-toggle" onClick={() => setManualToggle(!isOpen)}>
+        <span className="thinking-icon">{isOpen ? "▾" : "▸"}</span>
         <span className="thinking-label">Thinking</span>
-        <span className="thinking-preview">{!open && text.length > 60 ? text.slice(0, 60) + "…" : ""}</span>
+        {!isOpen && <span className="thinking-preview">{displayText.length > 80 ? displayText.slice(0, 80) + "…" : displayText}</span>}
       </button>
-      {open && (
+      {isOpen && (
         <div className="thinking-content">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+          {displayText}
+          {isStreaming && <span className="thinking-cursor">▊</span>}
         </div>
       )}
     </div>
@@ -114,7 +127,7 @@ function MessageBubble({ msg, onSuggestionClick }: { msg: Message; onSuggestionC
       <div className="chat-bubble">
         {msg.role === "assistant" ? (
           <>
-            {msg.thinking && <ThinkingBlock text={msg.thinking} />}
+            {(msg.thinking || msg.streaming) && <ThinkingBlock text={msg.thinking || ""} isStreaming={msg.streaming} />}
             {msg.sql && <SqlBlock statement={msg.sql} />}
             {msg.tableData && <TableResult columns={msg.tableData.columns} rows={msg.tableData.rows} />}
             {msg.content && <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>}
@@ -149,7 +162,6 @@ export function ChatPanel() {
   const [input, setInput] = useState("")
   const [streaming, setStreaming] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
-  const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -164,100 +176,72 @@ export function ChatPanel() {
     setMessages(m => [...m, { role: "assistant", content: "", streaming: true }])
     setStreaming(true)
 
-    const abort = new AbortController()
-    abortRef.current = abort
-
     try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: q }),
-        signal: abort.signal,
-      })
+      // Use EventSource for true browser-native SSE streaming
+      const url = `/api/chat?q=${encodeURIComponent(q)}`
+      const eventSource = new EventSource(url)
 
-      const contentType = res.headers.get("Content-Type") ?? ""
-      if (contentType.includes("application/json")) {
-        const data = await res.json()
+      eventSource.onmessage = (ev) => {
+        const payload = ev.data
+        if (payload === "[DONE]") {
+          eventSource.close()
+          setMessages(m => {
+            const updated = [...m]
+            updated[updated.length - 1] = { ...updated[updated.length - 1], streaming: false }
+            return updated
+          })
+          setStreaming(false)
+          return
+        }
+        try {
+          const event = JSON.parse(payload)
+          setMessages(m => {
+            const updated = [...m]
+            const last = updated[updated.length - 1]
+
+            switch (event.type) {
+              case "thinking":
+                updated[updated.length - 1] = { ...last, thinking: (last.thinking || "") + event.text }
+                break
+              case "text":
+                updated[updated.length - 1] = { ...last, content: last.content + event.text }
+                break
+              case "sql":
+                updated[updated.length - 1] = { ...last, sql: (last.sql || "") + (last.sql ? "\n" : "") + event.statement }
+                break
+              case "table":
+                updated[updated.length - 1] = { ...last, tableData: { columns: event.columns, rows: event.rows } }
+                break
+              case "suggested_queries":
+                updated[updated.length - 1] = { ...last, suggestedQueries: event.queries }
+                break
+            }
+            return updated
+          })
+        } catch { /* skip malformed */ }
+      }
+
+      eventSource.onerror = () => {
+        eventSource.close()
         setMessages(m => {
           const updated = [...m]
-          updated[updated.length - 1] = { role: "assistant", content: data.answer ?? "Sorry, something went wrong." }
+          const last = updated[updated.length - 1]
+          if (!last.content && !last.thinking) {
+            updated[updated.length - 1] = { role: "assistant", content: "Connection lost. Please try again." }
+          } else {
+            updated[updated.length - 1] = { ...last, streaming: false }
+          }
           return updated
         })
-        return
-      }
-
-      // Real SSE stream from the Cortex Agent
-      const reader = res.body!.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ""
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split("\n")
-        buffer = lines.pop() ?? ""
-
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue
-          const payload = line.slice(6).trim()
-          if (payload === "[DONE]") {
-            setMessages(m => {
-              const updated = [...m]
-              updated[updated.length - 1] = { ...updated[updated.length - 1], streaming: false }
-              return updated
-            })
-            return
-          }
-          try {
-            const event = JSON.parse(payload)
-            setMessages(m => {
-              const updated = [...m]
-              const last = updated[updated.length - 1]
-
-              switch (event.type) {
-                case "thinking":
-                  updated[updated.length - 1] = { ...last, thinking: (last.thinking || "") + event.text }
-                  break
-                case "text":
-                  updated[updated.length - 1] = { ...last, content: last.content + event.text }
-                  break
-                case "sql":
-                  updated[updated.length - 1] = { ...last, sql: (last.sql || "") + (last.sql ? "\n" : "") + event.statement }
-                  break
-                case "table":
-                  updated[updated.length - 1] = { ...last, tableData: { columns: event.columns, rows: event.rows } }
-                  break
-                case "suggested_queries":
-                  updated[updated.length - 1] = { ...last, suggestedQueries: event.queries }
-                  break
-                default:
-                  if (event.token) {
-                    updated[updated.length - 1] = { ...last, content: last.content + event.token }
-                  }
-              }
-              return updated
-            })
-          } catch { /* skip malformed */ }
-        }
+        setStreaming(false)
       }
     } catch (e: any) {
-      if (e?.name === "AbortError") return
       setMessages(m => {
         const updated = [...m]
         updated[updated.length - 1] = { role: "assistant", content: "Request failed. Please try again." }
         return updated
       })
-    } finally {
       setStreaming(false)
-      setMessages(m => {
-        const updated = [...m]
-        if (updated[updated.length - 1]?.streaming) {
-          updated[updated.length - 1] = { ...updated[updated.length - 1], streaming: false }
-        }
-        return updated
-      })
     }
   }
 
@@ -273,8 +257,9 @@ export function ChatPanel() {
         .thinking-icon { font-size:.7rem; width:12px }
         .thinking-label { font-weight:600; color:var(--primary-dark) }
         .thinking-preview { font-style:italic; opacity:.7; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1 }
-        .thinking-content { padding:8px 12px; border-top:1px solid var(--border); font-size:.78rem; color:var(--text-muted); max-height:300px; overflow-y:auto }
+        .thinking-content { padding:8px 12px; border-top:1px solid var(--border); font-size:.78rem; color:var(--text-muted); max-height:300px; overflow-y:auto; white-space:pre-wrap; line-height:1.5 }
         .thinking-content p { margin:4px 0 }
+        .thinking-cursor { display:inline-block; animation:blink 1s step-end infinite; color:var(--primary) }
 
         /* SQL block */
         .sql-block { margin-bottom:10px; border:1px solid var(--border); border-radius:6px; overflow:hidden }
@@ -316,13 +301,6 @@ export function ChatPanel() {
           {messages.map((m, i) => (
             <MessageBubble key={i} msg={m} onSuggestionClick={sendChat} />
           ))}
-          {streaming && !messages[messages.length - 1]?.content && !messages[messages.length - 1]?.thinking && (
-            <div className="chat-msg assistant">
-              <div className="chat-bubble" style={{ color: "var(--text-muted)" }}>
-                Processing<span style={{ animation: "blink 1s step-end infinite" }}> ...</span>
-              </div>
-            </div>
-          )}
           <div ref={bottomRef} />
         </div>
 

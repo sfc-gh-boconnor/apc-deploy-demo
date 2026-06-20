@@ -1,9 +1,11 @@
 /**
  * Cortex Agent REST API streaming helper.
- * Calls the agent:run endpoint with SSE streaming and yields parsed events.
+ * Uses Node.js native https for true chunk-by-chunk streaming (no buffering).
  */
 
 import fs from "fs"
+import https from "https"
+import http from "http"
 import { DATABASE } from "./config"
 
 const SPCS_TOKEN_PATH = "/snowflake/session/token"
@@ -26,10 +28,8 @@ function getToken(): string {
 }
 
 function getAccountUrl(): string {
-  // SPCS injects SNOWFLAKE_ACCOUNT_URL or SNOWFLAKE_HOST
   if (process.env.SNOWFLAKE_ACCOUNT_URL) return process.env.SNOWFLAKE_ACCOUNT_URL
   if (process.env.SNOWFLAKE_HOST) return `https://${process.env.SNOWFLAKE_HOST}`
-  // Fallback: construct from account identifier
   const account = process.env.SNOWFLAKE_ACCOUNT || ""
   if (account) return `https://${account}.snowflakecomputing.com`
   return ""
@@ -39,236 +39,265 @@ export interface AgentStreamOptions {
   agentName?: string
   schema?: string
   database?: string
-  signal?: AbortSignal
 }
 
 /**
- * Stream events from the Cortex Agent REST API.
- * Yields AgentEvent objects as they arrive from the SSE stream.
+ * Stream events from the Cortex Agent REST API using Node native HTTP.
+ * Each chunk is processed immediately as it arrives — no buffering.
  */
-export async function* streamAgentResponse(
+export function streamAgentRaw(
   question: string,
   options: AgentStreamOptions = {}
-): AsyncGenerator<AgentEvent> {
+): { stream: AsyncGenerator<AgentEvent>; abort: () => void } {
   const {
     agentName = "APC_RECONCILIATION_AGENT",
     schema = "ANALYTICS",
     database: db = DATABASE,
-    signal,
   } = options
 
   const token = getToken()
-  if (!token) {
-    yield { type: "error", message: "No SPCS token available — agent streaming requires SPCS runtime" }
-    return
-  }
-
   const accountUrl = getAccountUrl()
-  if (!accountUrl) {
-    yield { type: "error", message: "Cannot determine Snowflake account URL" }
-    return
-  }
 
-  const url = `${accountUrl}/api/v2/databases/${encodeURIComponent(db)}/schemas/${encodeURIComponent(schema)}/agents/${encodeURIComponent(agentName)}:run`
+  let abortController: { abort: () => void } = { abort: () => {} }
 
-  const body = JSON.stringify({
-    messages: [{ role: "user", content: [{ type: "text", text: question }] }],
-    stream: true,
-  })
+  async function* generate(): AsyncGenerator<AgentEvent> {
+    if (!token) {
+      yield { type: "error", message: "No SPCS token available" }
+      return
+    }
+    if (!accountUrl) {
+      yield { type: "error", message: "Cannot determine Snowflake account URL" }
+      return
+    }
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      Accept: "text/event-stream",
-    },
-    body,
-    signal,
-  })
+    const urlPath = `/api/v2/databases/${encodeURIComponent(db)}/schemas/${encodeURIComponent(schema)}/agents/${encodeURIComponent(agentName)}:run`
+    const parsedUrl = new URL(urlPath, accountUrl)
 
-  if (!res.ok) {
-    const errText = await res.text().catch(() => res.statusText)
-    yield { type: "error", message: `Agent API error (${res.status}): ${errText.slice(0, 500)}` }
-    return
-  }
+    const body = JSON.stringify({
+      messages: [{ role: "user", content: [{ type: "text", text: question }] }],
+      stream: true,
+    })
 
-  // Parse SSE stream
-  const reader = res.body!.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ""
+    // Use a promise-based wrapper around Node native http(s) for true streaming
+    const events: AgentEvent[] = []
+    let resolve: (() => void) | null = null
+    let done = false
+    let error: string | null = null
 
-  // Track content blocks by index for proper assembly
-  const blockTypes = new Map<number, string>()
+    const pending: AgentEvent[] = []
+    let waiting: ((v: IteratorResult<AgentEvent>) => void) | null = null
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
+    function push(event: AgentEvent) {
+      if (waiting) {
+        const w = waiting
+        waiting = null
+        w({ value: event, done: false })
+      } else {
+        pending.push(event)
+      }
+    }
 
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split("\n")
-    buffer = lines.pop() ?? ""
+    function finish() {
+      done = true
+      if (waiting) {
+        const w = waiting
+        waiting = null
+        w({ value: undefined as any, done: true })
+      }
+    }
 
-    for (const line of lines) {
-      if (!line.startsWith("data:")) continue
-      const payload = line.slice(5).trim()
-      if (!payload || payload === "[DONE]") {
-        if (payload === "[DONE]") {
-          yield { type: "done" }
+    const proto = parsedUrl.protocol === "https:" ? https : http
+    const req = proto.request(
+      parsedUrl,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          Accept: "text/event-stream",
+          "User-Agent": "APC-ProductCosting/1.0",
+        },
+      },
+      (res) => {
+        if (res.statusCode && res.statusCode >= 400) {
+          let errBody = ""
+          res.on("data", (chunk: Buffer) => { errBody += chunk.toString() })
+          res.on("end", () => {
+            push({ type: "error", message: `Agent API error (${res.statusCode}): ${errBody.slice(0, 500)}` })
+            push({ type: "done" })
+            finish()
+          })
           return
         }
-        continue
-      }
 
-      let event: any
-      try {
-        event = JSON.parse(payload)
-      } catch {
-        continue
-      }
+        let buffer = ""
+        const blockTypes = new Map<number, string>()
+        let chunkCount = 0
+        const startTime = Date.now()
 
-      // The Cortex Agent streaming format uses Anthropic-style SSE events:
-      // - message_start: beginning of message
-      // - content_block_start: start of a content block (text, thinking, tool_use, tool_result)
-      // - content_block_delta: incremental text/thinking token
-      // - content_block_stop: end of a content block
-      // - message_delta: end of message with stop_reason
-      // - message_stop: final event
+        res.on("data", (chunk: Buffer) => {
+          chunkCount++
+          const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
+          console.log(`[agent-stream] chunk #${chunkCount} at ${elapsed}s, size=${chunk.length}`)
+          
+          buffer += chunk.toString()
+          const lines = buffer.split("\n")
+          buffer = lines.pop() ?? ""
 
-      const eventType = event.type || event.event
+          for (const line of lines) {
+            if (!line.startsWith("data:")) continue
+            const payload = line.slice(5).trim()
+            if (!payload || payload === "[DONE]") {
+              if (payload === "[DONE]") {
+                push({ type: "done" })
+                finish()
+              }
+              continue
+            }
 
-      if (eventType === "content_block_start") {
-        const block = event.content_block
-        const idx = event.index ?? 0
-        if (block) {
-          blockTypes.set(idx, block.type)
+            let event: any
+            try { event = JSON.parse(payload) } catch { continue }
 
-          // tool_use blocks contain the generated SQL in input.sql
-          if (block.type === "tool_use" && block.input?.sql) {
-            yield { type: "sql", statement: block.input.sql }
-          }
+            const eventType = event.type || event.event
 
-          // tool_result blocks contain SQL execution results
-          if (block.type === "tool_result" || block.type === "tool_results") {
-            const content = block.content || []
-            for (const item of content) {
-              if (item.type === "json") {
-                const json = item.json || {}
-                // Extract SQL from the result
-                if (json.sql) {
-                  yield { type: "sql", statement: json.sql }
+            // Process streaming events
+            if (eventType === "content_block_start") {
+              const block = event.content_block
+              const idx = event.index ?? 0
+              if (block) {
+                blockTypes.set(idx, block.type)
+                if (block.type === "tool_use" && block.input?.sql) {
+                  push({ type: "sql", statement: block.input.sql })
                 }
-                // Extract result_set table data
-                if (json.result_set?.data && json.result_set?.resultSetMetaData?.rowType) {
-                  const columns = json.result_set.resultSetMetaData.rowType.map((col: any) => col.name)
-                  const rows = json.result_set.data.map((row: any[]) => {
-                    const obj: Record<string, any> = {}
-                    columns.forEach((col: string, i: number) => { obj[col] = row[i] })
-                    return obj
-                  })
-                  yield { type: "table", columns, rows }
+                if (block.type === "tool_result" || block.type === "tool_results") {
+                  processToolResult(block.content || [], push)
                 }
-                // Extract error messages
-                if (json.error?.message) {
-                  yield { type: "text", text: `Error: ${json.error.message}` }
-                } else if (json.error && typeof json.error === "string") {
-                  yield { type: "text", text: `Error: ${json.error}` }
+                if (block.type === "table") {
+                  processTableBlock(block, push)
                 }
-              } else if (item.type === "text") {
-                yield { type: "text", text: item.text }
+              }
+            } else if (eventType === "content_block_delta") {
+              const delta = event.delta
+              const idx = event.index ?? 0
+              const blockType = blockTypes.get(idx)
+              if (delta?.type === "thinking_delta" || blockType === "thinking") {
+                push({ type: "thinking", text: delta.thinking || delta.text || "" })
+              } else if (delta?.type === "text_delta" || blockType === "text") {
+                push({ type: "text", text: delta.text || "" })
+              }
+            } else if (eventType === "message_stop" || eventType === "message_delta") {
+              if (event.delta?.content) {
+                for (const block of event.delta.content) {
+                  if (block.type === "suggested_queries") {
+                    const queries = (block.suggested_queries || []).map((sq: any) => sq.query || sq)
+                    if (queries.length > 0) push({ type: "suggested_queries", queries })
+                  }
+                }
+              }
+            }
+
+            // Handle flat format (complete message in one event)
+            if (event.content && Array.isArray(event.content)) {
+              for (const block of event.content) {
+                if (block.type === "text") push({ type: "text", text: block.text })
+                else if (block.type === "thinking") push({ type: "thinking", text: block.thinking?.text || block.thinking || block.text || "" })
+                else if (block.type === "tool_use") {
+                  if (block.tool_use?.input?.sql || block.input?.sql) push({ type: "sql", statement: block.tool_use?.input?.sql || block.input?.sql })
+                }
+                else if (block.type === "tool_result") processToolResult(block.tool_result?.content || block.content || [], push)
+                else if (block.type === "table") processTableBlock(block, push)
+                else if (block.type === "suggested_queries") {
+                  const queries = (block.suggested_queries || []).map((sq: any) => sq.query || sq)
+                  if (queries.length > 0) push({ type: "suggested_queries", queries })
+                }
               }
             }
           }
+        })
 
-          // table blocks at content level
-          if (block.type === "table") {
-            const resultSet = block.result_set || block.table?.result_set
-            if (resultSet?.data && resultSet?.resultSetMetaData?.rowType) {
-              const columns = resultSet.resultSetMetaData.rowType.map((col: any) => col.name)
-              const rows = resultSet.data.map((row: any[]) => {
-                const obj: Record<string, any> = {}
-                columns.forEach((col: string, i: number) => { obj[col] = row[i] })
-                return obj
-              })
-              yield { type: "table", columns, rows }
-            }
+        res.on("end", () => {
+          if (!done) {
+            push({ type: "done" })
+            finish()
           }
-        }
-      } else if (eventType === "content_block_delta") {
-        const delta = event.delta
-        const idx = event.index ?? 0
-        const blockType = blockTypes.get(idx)
+        })
 
-        if (delta?.type === "thinking_delta" || blockType === "thinking") {
-          yield { type: "thinking", text: delta.thinking || delta.text || "" }
-        } else if (delta?.type === "text_delta" || blockType === "text") {
-          yield { type: "text", text: delta.text || "" }
-        } else if (delta?.type === "input_json_delta") {
-          // Tool input being streamed — skip (internal agent mechanics)
-        }
-      } else if (eventType === "content_block_stop") {
-        // Block finished — nothing to emit
-      } else if (eventType === "message_stop" || eventType === "message_delta") {
-        // Check for suggested queries in message_delta.content or stop reason
-        if (event.delta?.content) {
-          for (const block of event.delta.content) {
-            if (block.type === "suggested_queries") {
-              const queries = (block.suggested_queries || []).map((sq: any) => sq.query || sq)
-              if (queries.length > 0) yield { type: "suggested_queries", queries }
-            }
-          }
-        }
+        res.on("error", (err) => {
+          push({ type: "error", message: err.message })
+          finish()
+        })
       }
+    )
 
-      // Handle flat/non-streaming event format (full message in one event)
-      if (event.content && Array.isArray(event.content)) {
-        for (const block of event.content) {
-          if (block.type === "text") {
-            yield { type: "text", text: block.text }
-          } else if (block.type === "thinking") {
-            yield { type: "thinking", text: block.thinking?.text || block.thinking || block.text || "" }
-          } else if (block.type === "tool_use") {
-            // Extract SQL from tool_use input
-            if (block.tool_use?.input?.sql || block.input?.sql) {
-              yield { type: "sql", statement: block.tool_use?.input?.sql || block.input?.sql }
-            }
-          } else if (block.type === "tool_result") {
-            const content = block.tool_result?.content || block.content || []
-            for (const item of content) {
-              const json = item.json || item
-              if (json.sql) {
-                yield { type: "sql", statement: json.sql }
-              }
-              if (json.result_set?.data && json.result_set?.resultSetMetaData?.rowType) {
-                const columns = json.result_set.resultSetMetaData.rowType.map((col: any) => col.name)
-                const rows = json.result_set.data.map((row: any[]) => {
-                  const obj: Record<string, any> = {}
-                  columns.forEach((col: string, i: number) => { obj[col] = row[i] })
-                  return obj
-                })
-                yield { type: "table", columns, rows }
-              }
-            }
-          } else if (block.type === "table") {
-            const resultSet = block.table?.result_set || block.result_set
-            if (resultSet?.data && resultSet?.resultSetMetaData?.rowType) {
-              const columns = resultSet.resultSetMetaData.rowType.map((col: any) => col.name)
-              const rows = resultSet.data.map((row: any[]) => {
-                const obj: Record<string, any> = {}
-                columns.forEach((col: string, i: number) => { obj[col] = row[i] })
-                return obj
-              })
-              yield { type: "table", columns, rows }
-            }
-          } else if (block.type === "suggested_queries") {
-            const queries = (block.suggested_queries || []).map((sq: any) => sq.query || sq)
-            if (queries.length > 0) yield { type: "suggested_queries", queries }
-          }
-        }
+    req.on("error", (err) => {
+      push({ type: "error", message: `Request failed: ${err.message}` })
+      finish()
+    })
+
+    abortController = { abort: () => req.destroy() }
+    req.write(body)
+    req.end()
+
+    // Async iterator that yields events as they arrive
+    while (true) {
+      if (pending.length > 0) {
+        const ev = pending.shift()!
+        if (ev.type === "done") return
+        yield ev
+      } else if (done) {
+        return
+      } else {
+        const ev = await new Promise<IteratorResult<AgentEvent>>((r) => { waiting = r })
+        if (ev.done) return
+        if (ev.value.type === "done") return
+        yield ev.value
       }
     }
   }
 
-  // If we exit without [DONE], yield done anyway
-  yield { type: "done" }
+  return { stream: generate(), abort: () => abortController.abort() }
+}
+
+// Legacy wrapper for compatibility
+export async function* streamAgentResponse(
+  question: string,
+  options: AgentStreamOptions = {}
+): AsyncGenerator<AgentEvent> {
+  const { stream } = streamAgentRaw(question, options)
+  yield* stream
+}
+
+function processToolResult(content: any[], push: (e: AgentEvent) => void) {
+  for (const item of content) {
+    if (item.type === "json") {
+      const json = item.json || {}
+      if (json.sql) push({ type: "sql", statement: json.sql })
+      if (json.result_set?.data && json.result_set?.resultSetMetaData?.rowType) {
+        const columns = json.result_set.resultSetMetaData.rowType.map((col: any) => col.name)
+        const rows = json.result_set.data.map((row: any[]) => {
+          const obj: Record<string, any> = {}
+          columns.forEach((col: string, i: number) => { obj[col] = row[i] })
+          return obj
+        })
+        push({ type: "table", columns, rows })
+      }
+      if (json.error?.message) push({ type: "text", text: `Error: ${json.error.message}` })
+      else if (json.error && typeof json.error === "string") push({ type: "text", text: `Error: ${json.error}` })
+    } else if (item.type === "text") {
+      push({ type: "text", text: item.text })
+    }
+  }
+}
+
+function processTableBlock(block: any, push: (e: AgentEvent) => void) {
+  const resultSet = block.result_set || block.table?.result_set
+  if (resultSet?.data && resultSet?.resultSetMetaData?.rowType) {
+    const columns = resultSet.resultSetMetaData.rowType.map((col: any) => col.name)
+    const rows = resultSet.data.map((row: any[]) => {
+      const obj: Record<string, any> = {}
+      columns.forEach((col: string, i: number) => { obj[col] = row[i] })
+      return obj
+    })
+    push({ type: "table", columns, rows })
+  }
 }
