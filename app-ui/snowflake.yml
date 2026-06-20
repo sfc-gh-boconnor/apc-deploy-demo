@@ -20,6 +20,8 @@ entities:
           - .next
           - .git
           - snowflake.log
+          - output
+          - output_old
 
     query_warehouse: APC_DEPLOY_WH
     build_compute_pool:

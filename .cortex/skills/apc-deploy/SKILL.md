@@ -162,6 +162,23 @@ After the dbt build, run `feature_store.ipynb` (requires container runtime with 
 
 > `sql/06_ml_insights.sql` and `sql/12_sales_forecast.sql` are legacy — they still populate the `ANALYTICS.PRODUCT_RISK_SCORES` and `ANALYTICS.VARIANCE_FORECAST` tables, but the app no longer reads from them for risk scores or scenario forecasting.
 
+### Step 2d — Reconciliation Semantic View + Cortex Agent
+
+After the dbt build, deploy the reconciliation semantic view and Cortex Agent:
+
+```bash
+python deploy.py -f sql/13_reconciliation_agent.sql      # Workspace
+python deploy.py -c $CONN -f sql/13_reconciliation_agent.sql  # Local
+```
+
+This creates:
+- **Semantic View:** `APC_DEPLOY_DB.DBT_ANALYTICS.APC_RECONCILIATION_SV` — 4-table reconciliation model (product cost, rate stability, volume alignment, cost evolution) with verified queries and custom instructions
+- **Cortex Agent:** `APC_DEPLOY_DB.ANALYTICS.APC_RECONCILIATION_AGENT` — natural-language reconciliation assistant backed by the semantic view
+
+The agent answers questions like "Why are Dunboyne costs escalating?", "Which plants have volume misalignment?", and "Show cost evolution for escalating products."
+
+> **For iterative editing:** The workspace also has `cortex_project/APC_RECONCILIATION_AGENT.agent.yaml` and `cortex_project/apc_reconciliation_sv.sv.yaml` for editing via Cortex Code's `semantic_studio` tools. After editing, deploy with `semantic_studio` → `cortex_agent_deploy` / `semantic_view_deploy`.
+
 ### Step 3 — Upload semantic model to stage
 
 **Workspace (COPY FILES from workspace stage — preferred):**
@@ -360,6 +377,8 @@ Snowsight → Projects → Streamlit → APC_DEPLOY_STREAMLIT
 | **Profitability** | `PRODUCT_PROFITABILITY` | CO-PA style view: revenue + COGS + gross margin by product/market |
 | **Profitability** | `SD_BILLING` | 120 synthetic SD billing rows (10 products x 4 markets x 3 periods) |
 | **AI** | `@APC_DEPLOY_STAGE/APC_SV.yaml` | Semantic model for Cortex AI chat tab — covers PRODUCT_COST_SUMMARY, COST_COMPONENT_DETAIL, and PRODUCT_PROFITABILITY (margin metrics) |
+| **AI** | `APC_RECONCILIATION_SV` | Semantic view (4 tables: product cost, rate stability, volume alignment, cost evolution) for reconciliation and driver analysis |
+| **AI** | `APC_RECONCILIATION_AGENT` | Cortex Agent backed by the reconciliation SV — natural-language cost variance Q&A for finance/supply chain |
 | **App** | App Runtime (Next.js) | multi-tab dashboard (grouped **Live Demo**) reading `DBT_ANALYTICS` marts, deployed via `snow app deploy` — no Docker |
 
 ---

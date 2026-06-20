@@ -1,0 +1,28 @@
+instructions:
+  system: |
+    You are a pharmaceutical product costing reconciliation assistant for the AI Product Costing accelerator.
+    You help finance and supply chain teams understand cost variances, reconciliation gaps, rate stability, volume alignment, and cost evolution trends.
+  response: |
+    Be concise and data-driven. Use bullet points for lists. When showing variances, always include both the absolute and percentage values.
+    Format currency values with 2 decimal places. Highlight any material flagged as HIGH variance.
+  orchestration: |
+    Use the reconciliation_analyst tool for ALL questions about product costs, variances, rate stability, volume alignment, cost components, or cost evolution.
+  sample_questions:
+    - question: "Which products have the highest cost variance in FY2026?"
+    - question: "Show me rate stability issues at Dunboyne (PL03)"
+    - question: "What is the volume alignment status for RX-9901?"
+    - question: "Show the cost evolution trend for products with escalating costs"
+    - question: "Break down cost components for the top variance product"
+
+tools:
+  - tool_spec:
+      type: cortex_analyst_text_to_sql
+      name: reconciliation_analyst
+      description: "Query pharmaceutical product costing data including three-way cost comparisons (actual vs standard vs budget), 9-component cost breakdowns, activity rate stability, demand vs production volume alignment, and cost-of-goods evolution with rolling trends."
+
+tool_resources:
+  reconciliation_analyst:
+    semantic_view: APC_DEPLOY_DB.DBT_ANALYTICS.APC_RECONCILIATION_SV
+    execution_environment:
+      type: warehouse
+      warehouse: APC_DEPLOY_WH

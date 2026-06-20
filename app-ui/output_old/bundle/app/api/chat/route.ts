@@ -27,9 +27,6 @@ export async function POST(req: NextRequest) {
     const stream = new ReadableStream({
       async start(controller) {
         try {
-          // Send an immediate heartbeat so the client knows the connection is alive
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "thinking", text: "" })}\n\n`))
-
           for await (const event of streamAgentResponse(question)) {
             if (event.type === "done") {
               controller.enqueue(encoder.encode("data: [DONE]\n\n"))
@@ -62,10 +59,8 @@ export async function POST(req: NextRequest) {
     return new Response(stream, {
       headers: {
         "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache, no-transform",
-        Connection: "keep-alive",
+        "Cache-Control": "no-cache",
         "X-Accel-Buffering": "no",
-        "Transfer-Encoding": "chunked",
       },
     })
   } catch (e) {

@@ -8,3 +8,8 @@ artifacts:
   - path: apc_reconciliation_agent.agent.yaml
     type: cortex_agent
     targets: {}
+  - path: APC_RECONCILIATION_AGENT.agent.yaml
+    type: cortex_agent
+    targets:
+      default:
+        object: APC_DEPLOY_DB.ANALYTICS.APC_RECONCILIATION_AGENT

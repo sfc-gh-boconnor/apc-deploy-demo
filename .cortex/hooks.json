@@ -1,5 +1,7 @@
 {
-  "_comment": "Enforced guardrail: blocks any tool call that creates a NEW Snowflake connection (Session.builder / snowflake.connector.connect / Session(...)) so the active Workspace / Streamlit-in-Snowflake session is always reused. To activate, merge this into ~/.snowflake/cortex/hooks.json and set the command to the ABSOLUTE path of block-create-connection.sh in your clone.",
+  "_comment_1": "Enforced guardrail: blocks any tool call that creates a NEW Snowflake connection so the active Workspace session's auth token is always reused.",
+  "_comment_2": "WHY: Workspaces provide a short-lived OAuth token (/snowflake/session/token). Creating a new connection (Session.builder, snowflake.connector.connect, etc.) opens a competing session that causes the platform to revoke the original token — breaking the Workspace mid-flight.",
+  "_comment_3": "ACTIVATION: In a Workspace, copy this file to ~/.snowflake/cortex/hooks.json and set the command path to the absolute path of block-create-connection.sh in your workspace clone. The hook is automatically active for any Cortex Code session in this workspace.",
   "hooks": {
     "PreToolUse": [
       {
